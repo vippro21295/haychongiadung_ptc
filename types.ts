@@ -46,4 +46,4 @@ export interface GameState {
 
 export type AppMode = 'PLAYER' | 'ADMIN' | 'ANNOUNCER' | 'PUBLIC_DISPLAY';
 export type AdminTab = 'dashboard' | 'settings';
-export type PlayerScreen = 'WAITING' | 'LOGIN' | 'PRIZE_INFO' | 'INPUT_PRICE' | 'SUCCESS' | 'RESULT';
+export type PlayerScreen = 'WAITING' | 'LOGIN' | 'PRIZE_INFO' | 'INPUT_PRICE' | 'SUCCESS' | 'RESULT' | 'TIMEOUT';

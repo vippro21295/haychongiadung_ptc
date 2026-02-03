@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GameState, GameStatus, PlayerScreen, Submission } from '../types';
 import { gameService } from '../services/gameService';
 import { formatVND, formatTime } from './Formatters';
-import { CheckCircle, Trophy, Clock, User, DollarSign, Gift, Loader2, BellRing, AlertTriangle, CloudOff, PartyPopper } from 'lucide-react';
+import { CheckCircle, Trophy, Clock, User, DollarSign, Gift, Loader2, BellRing, AlertTriangle, CloudOff, PartyPopper, TimerOff } from 'lucide-react';
 
 export const PlayerView: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(gameService.getState());
@@ -36,28 +36,41 @@ export const PlayerView: React.FC = () => {
       const foundMySub = (newState.submissions || []).find(s => s.deviceId === deviceId);
       setMySubmission(foundMySub || null);
 
-      // AUTO-ROUTING DỰA TRÊN TRẠNG THÁI ADMIN
+      // --- LOGIC ĐIỀU PHỐI MÀN HÌNH ---
+      
+      // 1. KHI ADMIN RESET LƯỢT MỚI (IDLE)
       if (newState.status === GameStatus.IDLE) {
-        // Event: Admin mở lượt mới -> Reset toàn bộ
         setScreen('WAITING');
         setGuess('');
-        if (!foundMySub) setEmployeeId(''); 
+        // Giữ lại EmployeeID nếu đã từng nhập để tiện cho lượt sau
+        if (foundMySub) setEmployeeId(foundMySub.employeeId);
       } 
-      else if (newState.status === GameStatus.ANNOUNCED) {
-        // Event: Admin công bố -> Đẩy vào màn hình kết quả
-        if (foundMySub) setScreen('RESULT');
-      }
-      else if (newState.status === GameStatus.OPEN) {
-        // Nếu đã submit giá rồi thì giữ ở màn hình thành công
+
+      // 2. KHI ADMIN ĐÓNG LƯỢT (CLOSED)
+      else if (newState.status === GameStatus.CLOSED) {
+        // Kiểm tra xem đã gửi giá chưa
         if (foundMySub && foundMySub.guess > 0) {
+          // Đã gửi giá -> Giữ ở SUCCESS
           setScreen('SUCCESS');
+        } else {
+          // Chưa gửi giá -> Chuyển sang TIMEOUT
+          setScreen('TIMEOUT');
         }
       }
-      else if (newState.status === GameStatus.CLOSED) {
-        // Nếu đang nhập giá mà Admin đóng lượt -> Chuyển sang SUCCESS hoặc WAITING
-        if (screen === 'INPUT_PRICE') {
-          if (foundMySub && foundMySub.guess > 0) setScreen('SUCCESS');
-          else setScreen('WAITING');
+
+      // 3. KHI ADMIN CÔNG BỐ (ANNOUNCED)
+      else if (newState.status === GameStatus.ANNOUNCED) {
+        // Chỉ chuyển sang RESULT nếu đã tham gia gửi giá
+        if (foundMySub && foundMySub.guess > 0) {
+          setScreen('RESULT');
+        } 
+        // Nếu đang ở TIMEOUT hoặc chưa tham gia thì không bắn event kết quả thắng/thua
+      }
+
+      // 4. KHI ADMIN ĐANG MỞ (OPEN)
+      else if (newState.status === GameStatus.OPEN) {
+        if (foundMySub && foundMySub.guess > 0) {
+          setScreen('SUCCESS');
         }
       }
 
@@ -65,7 +78,7 @@ export const PlayerView: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, [deviceId, screen]);
+  }, [deviceId]);
 
   const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setError('');
@@ -78,7 +91,6 @@ export const PlayerView: React.FC = () => {
     setGuess(formatted);
   };
 
-  // LOGIC KHÓA MÃ NHÂN VIÊN (CHECK TỒN TẠI)
   const handleLogin = async () => {
     const cleanId = employeeId.trim().toUpperCase();
     if (!cleanId) {
@@ -89,19 +101,18 @@ export const PlayerView: React.FC = () => {
     setIsSubmitting(true);
     setError('');
 
-    // Kiểm tra xem mã này đã bị thiết bị khác chiếm chưa
+    // Kiểm tra mã nhân viên đã có người dùng chưa (Chống trùng realtime)
     const isIdTaken = (gameState.submissions || []).some(
       s => s.employeeId.toUpperCase() === cleanId && s.deviceId !== deviceId
     );
 
     if (isIdTaken) {
-      setError(`Mã ${cleanId} đã có người sử dụng. Vui lòng kiểm tra lại!`);
+      setError(`Mã ${cleanId} đã được đăng ký bởi thiết bị khác!`);
       setIsSubmitting(false);
       return;
     }
 
     try {
-      // Nếu chưa có submission nào của device này, tạo bản ghi "khóa mã" (guess = 0)
       if (!mySubmission) {
         const newLockEntry: Submission = {
           employeeId: cleanId,
@@ -114,10 +125,9 @@ export const PlayerView: React.FC = () => {
           submissions: [...(gameState.submissions || []), newLockEntry]
         });
       }
-      
       setScreen('PRIZE_INFO');
     } catch (err) {
-      setError('Lỗi kết nối Cloud. Thử lại sau.');
+      setError('Lỗi kết nối. Thử lại sau.');
     } finally {
       setIsSubmitting(false);
     }
@@ -125,7 +135,7 @@ export const PlayerView: React.FC = () => {
 
   const handleConfirmPrice = async () => {
     if (gameState.status !== GameStatus.OPEN) {
-      setError('Lượt chơi đã kết thúc, không thể gửi giá!');
+      setScreen('TIMEOUT');
       return;
     }
 
@@ -147,7 +157,7 @@ export const PlayerView: React.FC = () => {
       });
       setScreen('SUCCESS');
     } catch (err) {
-      setError('Không thể gửi giá. Vui lòng kiểm tra internet.');
+      setError('Không thể gửi giá. Thử lại sau.');
     } finally {
       setIsSubmitting(false);
     }
@@ -172,7 +182,7 @@ export const PlayerView: React.FC = () => {
             </div>
             <h1 className="text-3xl font-black text-slate-800 mb-4 uppercase tracking-tighter italic leading-none">
               {gameState.options.eventName}<br/>
-              <span className="text-blue-600 text-xl">REALTIME EVENT</span>
+              <span className="text-blue-600 text-xl">SỰ KIỆN TRỰC TIẾP</span>
             </h1>
             <p className="text-slate-500 mb-10 font-bold italic">Chào mừng bạn tham gia!</p>
             
@@ -197,7 +207,7 @@ export const PlayerView: React.FC = () => {
           <div className="p-8 animate-in slide-in-from-bottom-6">
             <div className="mb-10">
               <h2 className="text-3xl font-black text-slate-900 mb-2 uppercase italic tracking-tighter">Định danh</h2>
-              <p className="text-slate-500 text-sm font-bold italic">Nhập chính xác mã nhân viên của bạn</p>
+              <p className="text-slate-500 text-sm font-bold italic">Nhập mã nhân viên cực đậm để bắt đầu</p>
             </div>
             <div className="relative mb-6">
               <User className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 w-6 h-6" />
@@ -210,7 +220,7 @@ export const PlayerView: React.FC = () => {
                 }}
                 disabled={isSubmitting}
                 placeholder="MÃ NHÂN VIÊN"
-                className={`w-full pl-14 pr-6 py-6 bg-white border-4 rounded-[24px] text-2xl font-black outline-none transition-all text-slate-950 ${error ? 'border-red-500 bg-red-50' : 'border-slate-100 focus:border-blue-500 focus:bg-blue-50/30'}`}
+                className="w-full pl-14 pr-6 py-6 bg-white border-4 rounded-[24px] text-2xl font-black outline-none transition-all text-slate-950 border-slate-100 focus:border-blue-500 focus:bg-blue-50/30 placeholder:text-slate-200"
               />
             </div>
             {error && (
@@ -243,7 +253,7 @@ export const PlayerView: React.FC = () => {
                 <p className="text-slate-500 font-bold text-sm mb-6 italic leading-relaxed">{gameState.prize?.description}</p>
                 <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 text-[10px] text-emerald-700 font-black uppercase tracking-widest flex items-center gap-3">
                   <CheckCircle className="w-4 h-4 shrink-0" />
-                  <span>Đã nhận diện: {employeeId}</span>
+                  <span>Đã khóa mã: {employeeId}</span>
                 </div>
               </div>
             </div>
@@ -251,18 +261,17 @@ export const PlayerView: React.FC = () => {
               onClick={() => setScreen('INPUT_PRICE')}
               className="w-full py-5 bg-blue-600 text-white rounded-[24px] text-xl font-black shadow-xl active:scale-95 transition-all uppercase italic tracking-tighter"
             >
-              BẮT ĐẦU DỰ ĐOÁN
+              NHẬP GIÁ DỰ ĐOÁN
             </button>
           </div>
         );
 
       case 'INPUT_PRICE':
-        const isClosed = gameState.status === GameStatus.CLOSED;
         return (
           <div className="p-8 animate-in slide-in-from-right-8">
              <div className="mb-10">
-              <h2 className="text-3xl font-black text-slate-900 mb-2 uppercase italic tracking-tighter">Nhập giá</h2>
-              <p className="text-slate-500 text-sm font-bold italic">Dự đoán giá niêm yết (VNĐ)</p>
+              <h2 className="text-3xl font-black text-slate-900 mb-2 uppercase italic tracking-tighter">Dự đoán giá</h2>
+              <p className="text-slate-500 text-sm font-bold italic">Nhập giá bạn cho là đúng nhất</p>
             </div>
             <div className="relative mb-8">
               <span className="absolute left-6 top-1/2 -translate-y-1/2 text-3xl font-black text-slate-300">₫</span>
@@ -271,23 +280,18 @@ export const PlayerView: React.FC = () => {
                 inputMode="numeric"
                 value={guess}
                 onChange={handlePriceChange}
-                disabled={isSubmitting || isClosed}
+                disabled={isSubmitting}
                 placeholder="0"
                 className="w-full pl-16 pr-6 py-8 bg-white border-4 border-slate-100 rounded-[32px] text-4xl font-black focus:border-blue-600 focus:bg-blue-50/20 outline-none transition-all text-blue-600 placeholder:text-slate-100"
               />
             </div>
-            {isClosed && (
-              <div className="mb-6 p-4 bg-red-50 border-2 border-red-100 rounded-2xl text-red-600 font-black text-xs text-center uppercase italic">
-                MC đã khóa giá - Không thể gửi thêm!
-              </div>
-            )}
             {error && <p className="text-red-500 mb-6 font-black bg-red-50 p-4 rounded-xl text-center text-xs italic uppercase">{error}</p>}
             <button 
               onClick={handleConfirmPrice}
-              disabled={isSubmitting || isClosed || !guess}
-              className="w-full py-6 bg-blue-600 text-white rounded-[24px] text-xl font-black shadow-2xl active:scale-95 transition-all disabled:opacity-30 flex items-center justify-center gap-3 uppercase italic tracking-tighter"
+              disabled={isSubmitting || !guess}
+              className="w-full py-6 bg-blue-600 text-white rounded-[24px] text-xl font-black shadow-2xl active:scale-95 transition-all flex items-center justify-center gap-3 uppercase italic tracking-tighter"
             >
-              {isSubmitting ? <Loader2 className="w-7 h-7 animate-spin" /> : 'GỬI DỰ ĐOÁN'}
+              {isSubmitting ? <Loader2 className="w-7 h-7 animate-spin" /> : 'GỬI KẾT QUẢ'}
             </button>
           </div>
         );
@@ -298,8 +302,8 @@ export const PlayerView: React.FC = () => {
             <div className="bg-emerald-100 p-8 rounded-full mb-10 mt-10">
               <CheckCircle className="w-20 h-20 text-emerald-600" />
             </div>
-            <h2 className="text-3xl font-black text-slate-900 mb-2 uppercase italic tracking-tighter">Đã gửi giá!</h2>
-            <p className="text-slate-400 mb-10 font-bold italic uppercase text-xs tracking-widest">Đang đợi kết quả từ hệ thống...</p>
+            <h2 className="text-3xl font-black text-slate-900 mb-2 uppercase italic tracking-tighter">Đã gửi thành công!</h2>
+            <p className="text-slate-400 mb-10 font-bold italic uppercase text-xs tracking-widest">Đang chờ BTC công bố kết quả...</p>
             
             <div className="w-full bg-slate-900 p-8 rounded-[40px] text-left shadow-2xl relative overflow-hidden">
               <div className="absolute top-0 right-0 p-4 opacity-5 text-white"><DollarSign className="w-20 h-20" /></div>
@@ -309,10 +313,27 @@ export const PlayerView: React.FC = () => {
                   <p className="text-white font-black text-2xl tracking-tight">{mySubmission?.employeeId}</p>
                 </div>
                 <div>
-                  <p className="text-blue-400 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Giá dự đoán của bạn</p>
+                  <p className="text-blue-400 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Giá đã gửi</p>
                   <p className="text-white font-black text-4xl tracking-tighter">{mySubmission && formatVND(mySubmission.guess)}</p>
                 </div>
               </div>
+            </div>
+          </div>
+        );
+
+      case 'TIMEOUT':
+        return (
+          <div className="p-8 flex flex-col items-center text-center animate-in fade-in duration-500">
+            <div className="bg-red-100 p-8 rounded-full mb-10 mt-10">
+              <TimerOff className="w-20 h-20 text-red-600" />
+            </div>
+            <h2 className="text-3xl font-black text-slate-900 mb-4 uppercase italic tracking-tighter">HẾT THỜI GIAN!</h2>
+            <p className="text-slate-500 mb-10 font-bold italic px-4">
+              Bạn chưa kịp gửi giá dự đoán trong lượt này. Vui lòng tham gia ở lượt quà tiếp theo!
+            </p>
+            <div className="w-full bg-slate-50 border-2 border-dashed border-slate-200 p-8 rounded-[40px]">
+               <Loader2 className="w-6 h-6 animate-spin text-slate-300 mx-auto mb-4" />
+               <p className="text-slate-400 font-black uppercase text-[10px] tracking-widest italic">Chờ MC mở lượt quà mới...</p>
             </div>
           </div>
         );
@@ -360,7 +381,7 @@ export const PlayerView: React.FC = () => {
   };
 
   return (
-    <div className="max-w-md mx-auto min-h-screen bg-white shadow-2xl relative flex flex-col">
+    <div className="max-w-md mx-auto min-h-screen bg-white shadow-2xl relative flex flex-col overflow-hidden">
       <header className="p-6 bg-white border-b border-slate-50 flex items-center justify-between sticky top-0 z-20">
         <span className="font-black text-lg tracking-tighter text-blue-600 italic uppercase">
           {gameState.options.eventName}
