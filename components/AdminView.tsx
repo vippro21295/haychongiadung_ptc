@@ -39,6 +39,7 @@ export const AdminView: React.FC = () => {
       setOrgName(state.options.orgName);
       setPrimaryColor(state.options.primaryColor);
       
+      // Đồng bộ từ Cloud về UI Admin nếu game đã bắt đầu
       if (state.prize && state.status !== GameStatus.IDLE) {
         setPrizeName(state.prize.name);
         setPrizeDesc(state.prize.description);
@@ -119,10 +120,13 @@ export const AdminView: React.FC = () => {
   };
 
   const handlePrepareNextRound = () => {
+    // Reset cục bộ admin
     setPrizeName('');
     setPrizeDesc('');
     setRealPrice('');
     setImageUrl(DEFAULT_IMAGE);
+    
+    // Đẩy lệnh reset lên Cloud
     gameService.prepareNewRound();
   };
 
@@ -145,7 +149,7 @@ export const AdminView: React.FC = () => {
     }
   };
 
-  // Chỉ hiển thị những người đã nhập giá (guess > 0)
+  // Chỉ hiển thị những người đã gửi giá thực tế (guess > 0)
   const validSubmissions = (gameState.submissions || []).filter(s => s.guess > 0);
   const sortedSubmissions = [...validSubmissions].sort((a, b) => 
     sortOrder === 'desc' ? b.timestamp - a.timestamp : a.timestamp - b.timestamp
@@ -363,7 +367,6 @@ export const AdminView: React.FC = () => {
           </div>
         ) : (
           <div className="max-w-3xl space-y-10">
-            {/* Settings Tab Content */}
             <section className="bg-white p-10 rounded-[40px] border border-slate-100 shadow-sm space-y-8">
               <div className="flex items-center gap-3 text-slate-800 font-black text-xl uppercase italic">
                 <Palette className="w-7 h-7 text-blue-600" /> Tùy chỉnh thương hiệu
