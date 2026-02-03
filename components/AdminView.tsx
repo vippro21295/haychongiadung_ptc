@@ -39,9 +39,6 @@ export const AdminView: React.FC = () => {
       setOrgName(state.options.orgName);
       setPrimaryColor(state.options.primaryColor);
       
-      // CHỈ đồng bộ từ Cloud xuống UI Admin nếu:
-      // 1. Game đang diễn ra (OPEN/CLOSED/ANNOUNCED) - để Admin thấy đúng dữ liệu đang chạy
-      // 2. Không tự động xóa khi ở trạng thái IDLE để Admin còn nhập liệu
       if (state.prize && state.status !== GameStatus.IDLE) {
         setPrizeName(state.prize.name);
         setPrizeDesc(state.prize.description);
@@ -53,7 +50,7 @@ export const AdminView: React.FC = () => {
     });
 
     return () => unsubscribe();
-  }, []); // Trống để chỉ chạy 1 lần khi mount, lắng nghe sự thay đổi của Cloud một cách độc lập
+  }, []);
 
   const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawValue = e.target.value.replace(/\D/g, '');
@@ -122,13 +119,10 @@ export const AdminView: React.FC = () => {
   };
 
   const handlePrepareNextRound = () => {
-    // Xóa sạch trạng thái UI Admin cục bộ
     setPrizeName('');
     setPrizeDesc('');
     setRealPrice('');
     setImageUrl(DEFAULT_IMAGE);
-    
-    // Gọi lệnh reset hệ thống Cloud
     gameService.prepareNewRound();
   };
 
@@ -151,7 +145,9 @@ export const AdminView: React.FC = () => {
     }
   };
 
-  const sortedSubmissions = [...(gameState.submissions || [])].sort((a, b) => 
+  // Chỉ hiển thị những người đã nhập giá (guess > 0)
+  const validSubmissions = (gameState.submissions || []).filter(s => s.guess > 0);
+  const sortedSubmissions = [...validSubmissions].sort((a, b) => 
     sortOrder === 'desc' ? b.timestamp - a.timestamp : a.timestamp - b.timestamp
   );
 
@@ -249,7 +245,7 @@ export const AdminView: React.FC = () => {
             </h1>
             <p className="text-slate-500 font-bold mt-2 flex items-center gap-2">
                <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-               {gameState.submissions.length} thiết bị đang kết nối thời gian thực
+               {validSubmissions.length} lượt dự đoán đã gửi lên Cloud
             </p>
           </div>
           <div className="flex gap-4">
@@ -348,7 +344,7 @@ export const AdminView: React.FC = () => {
                       {sortedSubmissions.length === 0 ? (
                         <tr>
                             <td colSpan={4} className="px-10 py-20 text-center text-slate-300 font-bold italic uppercase tracking-widest">
-                                Đang chờ người chơi đầu tiên...
+                                Đang chờ người chơi gửi giá...
                             </td>
                         </tr>
                       ) : sortedSubmissions.map((sub, idx) => (
@@ -367,6 +363,7 @@ export const AdminView: React.FC = () => {
           </div>
         ) : (
           <div className="max-w-3xl space-y-10">
+            {/* Settings Tab Content */}
             <section className="bg-white p-10 rounded-[40px] border border-slate-100 shadow-sm space-y-8">
               <div className="flex items-center gap-3 text-slate-800 font-black text-xl uppercase italic">
                 <Palette className="w-7 h-7 text-blue-600" /> Tùy chỉnh thương hiệu
