@@ -1,13 +1,12 @@
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { GameState, GameStatus, Submission } from '../types';
 import { gameService } from '../services/gameService';
 import { formatVND, formatTime } from './Formatters';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
   Trophy, Users, Star, Gift, TrendingUp, TrendingDown, 
-  Award, BarChart3, CheckCircle, 
-  Zap, Target, Clock, Monitor, Link as LinkIcon
+  Target, Clock, BarChart3, CheckCircle
 } from 'lucide-react';
 
 export const PublicDisplayView: React.FC = () => {
@@ -15,7 +14,6 @@ export const PublicDisplayView: React.FC = () => {
   const [playerUrl, setPlayerUrl] = useState<string>('');
 
   useEffect(() => {
-    // Đăng ký lắng nghe Firebase Cloud
     const unsubscribe = gameService.subscribeToState((newState) => {
       setGameState(newState);
     });
@@ -115,7 +113,7 @@ export const PublicDisplayView: React.FC = () => {
                    </div>
                 </div>
 
-                <div className={`p-5 rounded-[30px] text-white flex flex-col items-center justify-center text-center shadow-lg transition-all duration-500 border-b-4 flex-1 ${isClosed ? 'bg-red-600 border-red-900' : ''}`} style={{ backgroundColor: isClosed ? undefined : primaryColor }}>
+                <div className={`p-5 rounded-[30px] text-white flex flex-col items-center justify-center text-center shadow-lg transition-all duration-500 flex-1 ${isClosed ? 'bg-red-600' : ''}`} style={{ backgroundColor: isClosed ? undefined : primaryColor }}>
                   {isClosed ? (
                     <h3 className="text-2xl font-black uppercase italic tracking-tighter leading-none">LƯỢT ĐÃ ĐÓNG</h3>
                   ) : (
@@ -127,17 +125,21 @@ export const PublicDisplayView: React.FC = () => {
 
             <div className="col-span-12 lg:col-span-8 flex flex-col gap-6 h-full min-h-0">
               <div className="grid grid-cols-3 gap-6 shrink-0">
-                <div className="bg-white/5 backdrop-blur-md border border-white/10 p-6 rounded-[35px] text-center shadow-lg">
+                <div className="bg-white/5 backdrop-blur-md border border-white/10 p-6 rounded-[35px] text-center shadow-lg flex flex-col justify-center">
                   <TrendingDown className="w-6 h-6 text-red-400 mx-auto mb-2" />
-                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Min Guess</p>
+                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Thấp nhất</p>
                   <p className="text-2xl font-black text-white italic tracking-tighter">{stats ? formatVND(stats.minGuess) : '---'}</p>
                 </div>
-                <div className="bg-white/5 backdrop-blur-md border border-white/10 p-6 rounded-[35px] text-center shadow-lg">
+                <div className="bg-white/5 backdrop-blur-md border border-white/10 p-6 rounded-[35px] text-center shadow-lg flex flex-col justify-center">
                   <TrendingUp className="w-6 h-6 text-green-400 mx-auto mb-2" />
-                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Max Guess</p>
+                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Cao nhất</p>
                   <p className="text-2xl font-black text-white italic tracking-tighter">{stats ? formatVND(stats.maxGuess) : '---'}</p>
                 </div>
-                <div className="border-b-4 p-6 rounded-[35px] text-center shadow-xl" style={{ backgroundColor: primaryColor }}>
+                {/* Khôi phục khối Tổng tham gia về đơn giản */}
+                <div 
+                  className="p-6 rounded-[35px] text-center shadow-xl flex flex-col justify-center transition-all"
+                  style={{ backgroundColor: primaryColor }}
+                >
                   <Users className="w-8 h-8 text-white/30 mx-auto mb-1" />
                   <p className="text-[9px] font-black text-white/60 uppercase tracking-widest mb-1">Tổng tham gia</p>
                   <p className="text-5xl font-black text-white tracking-tighter leading-none">{gameState.submissions.length}</p>
@@ -147,15 +149,21 @@ export const PublicDisplayView: React.FC = () => {
               <div className="flex-1 bg-slate-900/60 backdrop-blur-3xl border border-white/10 rounded-[40px] overflow-hidden flex flex-col min-h-0">
                 <div className="px-8 py-4 border-b border-white/5 flex justify-between items-center bg-white/[0.02]">
                   <h3 className="text-xl font-black text-white uppercase italic flex items-center gap-3">
-                    <BarChart3 className="w-6 h-6" style={{ color: primaryColor }} /> LIVE STREAM DATA
+                    <BarChart3 className="w-6 h-6" style={{ color: primaryColor }} /> DỮ LIỆU ĐANG ĐỔ VỀ
                   </h3>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-ping"></div>
+                    <span className="text-[10px] font-black text-emerald-500 uppercase">Live Sync Active</span>
+                  </div>
                 </div>
                 
                 <div className="flex-1 p-6 grid grid-cols-2 gap-8 min-h-0">
                    <div className="flex flex-col min-h-0">
-                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">XU HƯỚNG GIÁ</p>
+                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">XU HƯỚNG GIÁ PHỔ BIẾN</p>
                       <div className="space-y-3 overflow-y-auto pr-2 custom-scrollbar">
-                        {stats?.sortedFreq.map((item, i) => (
+                        {stats?.sortedFreq.length === 0 ? (
+                           <div className="flex-1 flex items-center justify-center text-slate-600 italic text-sm">Chưa có dữ liệu xu hướng</div>
+                        ) : stats?.sortedFreq.map((item, i) => (
                           <div key={i} className="flex items-center justify-between bg-white/[0.03] p-4 rounded-[20px] border border-white/5">
                             <span className="font-black text-white text-2xl italic tracking-tighter">{formatVND(item.price)}</span>
                             <div className="bg-white/10 text-white text-[9px] font-black px-3 py-1.5 rounded-xl uppercase tracking-widest">{item.count} lượt</div>
@@ -165,9 +173,11 @@ export const PublicDisplayView: React.FC = () => {
                    </div>
 
                    <div className="flex flex-col min-h-0">
-                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">DỮ LIỆU ĐANG ĐỔ VỀ</p>
+                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">NHẬT KÝ DỰ ĐOÁN MỚI NHẤT</p>
                       <div className="space-y-2 overflow-y-auto pr-2 custom-scrollbar">
-                        {[...gameState.submissions].reverse().slice(0, 10).map((sub, i) => (
+                        {gameState.submissions.length === 0 ? (
+                          <div className="flex-1 flex items-center justify-center text-slate-600 italic text-sm">Đang chờ lượt chơi đầu tiên...</div>
+                        ) : [...gameState.submissions].reverse().slice(0, 10).map((sub, i) => (
                           <div key={i} className="flex items-center justify-between bg-white/[0.02] p-3.5 rounded-[18px] border border-white/5 animate-in slide-in-from-right-4">
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 bg-slate-800 rounded-lg flex items-center justify-center text-xs font-black text-white">{sub.employeeId.charAt(0)}</div>
@@ -176,7 +186,10 @@ export const PublicDisplayView: React.FC = () => {
                                  <p className="text-[8px] text-slate-500 font-bold uppercase">{formatTime(sub.timestamp)}</p>
                               </div>
                             </div>
-                            <CheckCircle className="w-4 h-4 text-green-500/50" />
+                            <div className="flex items-center gap-2">
+                               <span className="text-xs font-black text-slate-400 italic">{formatVND(sub.guess)}</span>
+                               <CheckCircle className="w-4 h-4 text-green-500/50" />
+                            </div>
                           </div>
                         ))}
                       </div>

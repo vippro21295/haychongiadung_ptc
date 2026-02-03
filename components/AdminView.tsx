@@ -11,14 +11,7 @@ import {
   QrCode, X, LayoutGrid, BarChart2, Palette, Info, Check, Cloud, Link as LinkIcon, Copy, Share2, Activity
 } from 'lucide-react';
 
-const COLOR_PRESETS = [
-  { name: 'Blue', value: '#2563eb' },
-  { name: 'Red', value: '#dc2626' },
-  { name: 'Purple', value: '#9333ea' },
-  { name: 'Emerald', value: '#059669' },
-  { name: 'Amber', value: '#d97706' },
-  { name: 'Pink', value: '#db2777' },
-];
+const DEFAULT_IMAGE = 'https://images.unsplash.com/photo-1695048133142-1a20484d2569?auto=format&fit=crop&q=80&w=800';
 
 export const AdminView: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(gameService.getState());
@@ -32,7 +25,7 @@ export const AdminView: React.FC = () => {
   const [prizeName, setPrizeName] = useState('');
   const [prizeDesc, setPrizeDesc] = useState('');
   const [realPrice, setRealPrice] = useState('');
-  const [imageUrl, setImageUrl] = useState('https://images.unsplash.com/photo-1695048133142-1a20484d2569?auto=format&fit=crop&q=80&w=800');
+  const [imageUrl, setImageUrl] = useState(DEFAULT_IMAGE);
 
   const [eventName, setEventName] = useState('');
   const [orgName, setOrgName] = useState('');
@@ -46,18 +39,21 @@ export const AdminView: React.FC = () => {
       setOrgName(state.options.orgName);
       setPrimaryColor(state.options.primaryColor);
       
-      if (state.prize && prizeName === '') {
+      // CHỈ đồng bộ từ Cloud xuống UI Admin nếu:
+      // 1. Game đang diễn ra (OPEN/CLOSED/ANNOUNCED) - để Admin thấy đúng dữ liệu đang chạy
+      // 2. Không tự động xóa khi ở trạng thái IDLE để Admin còn nhập liệu
+      if (state.prize && state.status !== GameStatus.IDLE) {
         setPrizeName(state.prize.name);
         setPrizeDesc(state.prize.description);
         setRealPrice(state.prize.realPrice.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
-        setImageUrl(state.prize.imageUrl || imageUrl);
+        setImageUrl(state.prize.imageUrl || DEFAULT_IMAGE);
       }
-      // Simulating real-time latency update
+      
       setPing(Math.floor(Math.random() * (60 - 30) + 30));
     });
 
     return () => unsubscribe();
-  }, []);
+  }, []); // Trống để chỉ chạy 1 lần khi mount, lắng nghe sự thay đổi của Cloud một cách độc lập
 
   const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawValue = e.target.value.replace(/\D/g, '');
@@ -125,6 +121,17 @@ export const AdminView: React.FC = () => {
     gameService.saveState({ ...gameState, status: GameStatus.ANNOUNCED, winner });
   };
 
+  const handlePrepareNextRound = () => {
+    // Xóa sạch trạng thái UI Admin cục bộ
+    setPrizeName('');
+    setPrizeDesc('');
+    setRealPrice('');
+    setImageUrl(DEFAULT_IMAGE);
+    
+    // Gọi lệnh reset hệ thống Cloud
+    gameService.prepareNewRound();
+  };
+
   const handleSaveSettings = () => {
     gameService.updateOptions({
       eventName,
@@ -140,6 +147,7 @@ export const AdminView: React.FC = () => {
       setPrizeName('');
       setPrizeDesc('');
       setRealPrice('');
+      setImageUrl(DEFAULT_IMAGE);
     }
   };
 
@@ -263,25 +271,33 @@ export const AdminView: React.FC = () => {
         {activeTab === 'dashboard' ? (
           <div className="grid grid-cols-12 gap-10">
             <div className="col-span-12 lg:col-span-4 space-y-10">
-              <section className="bg-white p-10 rounded-[40px] shadow-sm border border-slate-100 space-y-6">
-                <div className="flex items-center gap-3 mb-4 text-slate-800 font-black text-xl uppercase italic tracking-tighter">
+              <section className="bg-white p-8 rounded-[40px] shadow-sm border border-slate-100 space-y-5">
+                <div className="flex items-center gap-3 mb-2 text-slate-800 font-black text-xl uppercase italic tracking-tighter">
                   <Gift className="w-7 h-7 text-blue-600" /> Cấu hình lượt chơi
                 </div>
                 
-                <div className="space-y-4">
+                <div className="space-y-3">
                     <div>
                         <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1 block">Tên quà tặng</label>
                         <input 
                             type="text" value={prizeName} onChange={(e) => setPrizeName(e.target.value)}
-                            className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold focus:bg-white focus:border-blue-500 outline-none transition-all"
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-black text-slate-950 focus:bg-white focus:border-blue-500 outline-none transition-all text-sm"
                             placeholder="Ví dụ: iPhone 16 Pro Max" disabled={gameState.status !== GameStatus.IDLE}
+                        />
+                    </div>
+                    <div>
+                        <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1 block">Mô tả quà tặng</label>
+                        <textarea 
+                            value={prizeDesc} onChange={(e) => setPrizeDesc(e.target.value)}
+                            className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl font-black text-slate-900 focus:bg-white focus:border-blue-500 outline-none transition-all h-16 resize-none text-sm"
+                            placeholder="Mô tả quà tặng..." disabled={gameState.status !== GameStatus.IDLE}
                         />
                     </div>
                     <div>
                         <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1 block">Giá trị niêm yết</label>
                         <input 
                             type="text" value={realPrice} onChange={handlePriceChange}
-                            className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl font-black text-blue-600 text-2xl focus:bg-white focus:border-blue-500 outline-none transition-all"
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl font-black text-blue-600 text-xl focus:bg-white focus:border-blue-500 outline-none transition-all"
                             placeholder="0 ₫" disabled={gameState.status !== GameStatus.IDLE}
                         />
                     </div>
@@ -289,20 +305,20 @@ export const AdminView: React.FC = () => {
 
                 <div 
                   onClick={() => gameState.status === GameStatus.IDLE && triggerFileUpload()}
-                  className="aspect-video bg-slate-50 border-2 border-dashed border-slate-200 rounded-3xl overflow-hidden cursor-pointer flex items-center justify-center group relative transition-all hover:border-blue-300"
+                  className="h-60 bg-slate-50 border-2 border-dashed border-slate-200 rounded-2xl overflow-hidden cursor-pointer flex items-center justify-center group relative transition-all hover:border-blue-300"
                 >
                   <img src={imageUrl} className="w-full h-full object-cover transition-all group-hover:scale-105" />
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center">
-                      <Upload className="w-10 h-10 text-white" />
+                      <Upload className="w-8 h-8 text-white" />
                   </div>
                   <input type="file" ref={fileInputRef} onChange={handleImageUpload} className="hidden" />
                 </div>
                 
-                <div className="pt-6 space-y-4">
-                  {gameState.status === GameStatus.IDLE && <button onClick={handleOpenRound} className="w-full py-5 bg-blue-600 text-white rounded-[24px] font-black uppercase italic tracking-tighter shadow-xl shadow-blue-200 transition-all hover:bg-blue-700 active:scale-95">Mở lượt tham gia</button>}
-                  {gameState.status === GameStatus.OPEN && <button onClick={handleCloseRound} className="w-full py-5 bg-red-600 text-white rounded-[24px] font-black uppercase italic tracking-tighter shadow-xl shadow-red-200 transition-all hover:bg-red-700 active:scale-95">Đóng lượt (Khóa giá)</button>}
-                  {gameState.status === GameStatus.CLOSED && <button onClick={handleAnnounce} className="w-full py-5 bg-purple-600 text-white rounded-[24px] font-black uppercase italic tracking-tighter shadow-xl shadow-purple-200 transition-all hover:bg-purple-700 active:scale-95">Công bố người thắng</button>}
-                  {gameState.status === GameStatus.ANNOUNCED && <button onClick={() => gameService.prepareNewRound()} className="w-full py-5 bg-emerald-600 text-white rounded-[24px] font-black uppercase italic tracking-tighter shadow-xl shadow-emerald-200 transition-all hover:bg-emerald-700 active:scale-95">Tiếp tục lượt quà mới</button>}
+                <div className="pt-2 space-y-3">
+                  {gameState.status === GameStatus.IDLE && <button onClick={handleOpenRound} className="w-full py-4 bg-blue-600 text-white rounded-[20px] font-black uppercase italic tracking-tighter shadow-lg shadow-blue-200 transition-all hover:bg-blue-700 active:scale-95">Mở lượt tham gia</button>}
+                  {gameState.status === GameStatus.OPEN && <button onClick={handleCloseRound} className="w-full py-4 bg-red-600 text-white rounded-[20px] font-black uppercase italic tracking-tighter shadow-lg shadow-red-200 transition-all hover:bg-red-700 active:scale-95">Đóng lượt (Khóa giá)</button>}
+                  {gameState.status === GameStatus.CLOSED && <button onClick={handleAnnounce} className="w-full py-4 bg-purple-600 text-white rounded-[20px] font-black uppercase italic tracking-tighter shadow-lg shadow-purple-200 transition-all hover:bg-purple-700 active:scale-95">Công bố người thắng</button>}
+                  {gameState.status === GameStatus.ANNOUNCED && <button onClick={handlePrepareNextRound} className="w-full py-4 bg-emerald-600 text-white rounded-[20px] font-black uppercase italic tracking-tighter shadow-lg shadow-emerald-200 transition-all hover:bg-emerald-700 active:scale-95">Tiếp tục lượt quà mới</button>}
                 </div>
               </section>
             </div>
