@@ -1,21 +1,21 @@
 
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, onSnapshot } from "firebase/firestore";
+import { getDatabase, ref, set, onValue, get } from "firebase/database";
 import { GameState, GameStatus, Submission, RoundResult, AppOptions } from '../types';
 
 const firebaseConfig = {
   apiKey: "AIzaSyD4G9RqK1mjroBRmbHalOkwuph8W2ilRzE",
   authDomain: "haychongiadung-ptc.firebaseapp.com",
+  databaseURL: "https://haychongiadung-ptc-default-rtdb.firebaseio.com", // Đảm bảo URL RTDB chính xác
   projectId: "haychongiadung-ptc",
   storageBucket: "haychongiadung-ptc.firebasestorage.app",
   messagingSenderId: "954923411067",
-  appId: "1:954923411067:web:947062af0ad62fa533e4de",
-  measurementId: "G-92BYGRYNLH"
+  appId: "1:954923411067:web:947062af0ad62fa533e4de"
 };
 
 const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const stateDocRef = doc(db, 'game', 'globalState');
+const db = getDatabase(app);
+const stateRef = ref(db, 'game/globalState');
 
 const DEVICE_ID_KEY = 'CHON_GIA_DUNG_DEVICE_ID';
 const DEFAULT_OPTIONS: AppOptions = {
@@ -57,8 +57,9 @@ export const gameService = {
   },
 
   subscribeToState(callback: (state: GameState) => void) {
-    return onSnapshot(stateDocRef, (snapshot) => {
-      const data = snapshot.data() as GameState;
+    // Realtime Database onValue cực nhanh và tốn ít data hơn Firestore snapshot
+    return onValue(stateRef, (snapshot) => {
+      const data = snapshot.val() as GameState;
       if (data) {
         currentState = {
           ...DEFAULT_STATE,
@@ -68,23 +69,14 @@ export const gameService = {
           options: { ...DEFAULT_OPTIONS, ...data.options }
         };
         callback(currentState);
-        
-        // Notify success if previously had an error or just connected
         if (errorListener) errorListener(null);
         if (connectionListener) connectionListener();
       } else {
-        // First time initialization
         this.saveState(DEFAULT_STATE);
       }
     }, (error) => {
-      console.error("Firestore Subscribe Error:", error);
-      if (errorListener) {
-        let msg = "Lỗi kết nối Cloud.";
-        if (error.code === 'permission-denied') {
-          msg = "Firestore API chưa được kích hoạt hoặc Rules bị chặn. Hãy kiểm tra lại Firebase Console.";
-        }
-        errorListener(msg);
-      }
+      console.error("RTDB Subscribe Error:", error);
+      if (errorListener) errorListener("Mất kết nối Realtime.");
     });
   },
 
@@ -94,15 +86,11 @@ export const gameService = {
 
   async saveState(state: GameState) {
     try {
-      await setDoc(stateDocRef, state);
+      await set(stateRef, state);
       if (errorListener) errorListener(null);
     } catch (error: any) {
-      console.error("Firestore Save Error:", error);
-      if (errorListener) {
-        errorListener(error.code === 'permission-denied' 
-          ? "Lỗi: Không có quyền ghi. Hãy kiểm tra lại Firestore Rules." 
-          : "Lỗi lưu dữ liệu.");
-      }
+      console.error("RTDB Save Error:", error);
+      if (errorListener) errorListener("Lỗi lưu dữ liệu Realtime.");
     }
   },
 
@@ -120,7 +108,7 @@ export const gameService = {
 
   prepareNewRound() {
     const state = this.getState();
-    const newHistory = [...state.history];
+    const newHistory = [...(state.history || [])];
 
     if (state.status === GameStatus.ANNOUNCED && state.winner && state.prize) {
       const result: RoundResult = {
@@ -142,10 +130,13 @@ export const gameService = {
 
   calculateWinner(state: GameState): Submission | null {
     if (!state.prize || !state.submissions || state.submissions.length === 0) return null;
-
     const realPrice = state.prize.realPrice;
-    const sortedSubmissions = [...state.submissions].sort((a, b) => a.timestamp - b.timestamp);
+    
+    // Lọc bỏ những người guess = 0 (chưa nhập giá)
+    const validSubs = state.submissions.filter(s => s.guess > 0);
+    if (validSubs.length === 0) return null;
 
+    const sortedSubmissions = [...validSubs].sort((a, b) => a.timestamp - b.timestamp);
     const exactMatches = sortedSubmissions.filter(s => s.guess === realPrice);
     if (exactMatches.length > 0) return exactMatches[0];
 
@@ -160,7 +151,6 @@ export const gameService = {
         closest = current;
       }
     }
-
     return closest;
   }
 };
