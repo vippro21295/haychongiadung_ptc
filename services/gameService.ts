@@ -2,7 +2,7 @@
 import PocketBase from 'pocketbase';
 import { GameState, GameStatus, Submission, RoundResult, AppOptions, Prize } from '../types';
 
-const PB_URL = 'https://lawrence-pct-unlike-hand.trycloudflare.com';
+const PB_URL = 'https://9640c7f0ed36.ngrok-free.app';
 const pb = new PocketBase(PB_URL);
 
 // Tắt tự động hủy request để tránh lỗi "autocancelled" trong React StrictMode
