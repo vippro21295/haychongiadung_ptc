@@ -1,9 +1,21 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { GameState, GameStatus, PlayerScreen, Submission } from '../types';
 import { gameService } from '../services/gameService';
-import { formatVND, formatTime } from './Formatters';
-import { CheckCircle, Trophy, Clock, User, DollarSign, Gift, Loader2, BellRing, AlertTriangle, CloudOff, PartyPopper, TimerOff } from 'lucide-react';
+import { formatVND, formatTime, formatNumberWithDots, parseNumberFromDots } from './Formatters';
+import { CheckCircle, Trophy, Clock, User, DollarSign, Gift, Loader2, AlertTriangle, Frown, Hourglass } from 'lucide-react';
+
+/**
+ * Hàm lấy hoặc tạo mã thiết bị duy nhất cho máy khách
+ */
+const getDeviceId = (): string => {
+  let id = localStorage.getItem('game_device_id');
+  if (!id) {
+    id = 'dev_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+    localStorage.setItem('game_device_id', id);
+  }
+  return id;
+};
 
 export const PlayerView: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(gameService.getState());
@@ -13,190 +25,142 @@ export const PlayerView: React.FC = () => {
   const [mySubmission, setMySubmission] = useState<Submission | null>(null);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isCloudLoading, setIsCloudLoading] = useState(true);
-  
-  const deviceId = useRef(gameService.getDeviceId()).current;
-  const lastStatus = useRef<GameStatus>(gameState.status);
+  const [deviceId] = useState<string>(getDeviceId());
 
-  // LOGIC ĐIỀU PHỐI EVENT TỪ CLOUD
+  // Lấy mã nhân viên từ URL hash khi component mount
   useEffect(() => {
-    const unsubscribe = gameService.subscribeToState((newState) => {
-      setIsCloudLoading(false);
-      
-      // Xử lý rung máy khi thắng
-      if (lastStatus.current !== GameStatus.ANNOUNCED && newState.status === GameStatus.ANNOUNCED) {
-        if (newState.winner && newState.winner.deviceId === deviceId) {
-          if ('vibrate' in navigator) navigator.vibrate([300, 100, 300, 100, 500]);
+    const handleHashSync = () => {
+      const hash = window.location.hash;
+      if (hash.startsWith('#player/')) {
+        const idFromHash = hash.replace('#player/', '');
+        if (idFromHash) {
+          setEmployeeId(idFromHash.toUpperCase());
         }
       }
+    };
 
-      setGameState(newState);
-      
-      // Tìm thông tin của mình trên Cloud
-      const foundMySub = (newState.submissions || []).find(s => s.deviceId === deviceId);
-      setMySubmission(foundMySub || null);
+    handleHashSync();
+    window.addEventListener('hashchange', handleHashSync);
+    return () => window.removeEventListener('hashchange', handleHashSync);
+  }, []);
 
-      // --- LOGIC ĐIỀU PHỐI MÀN HÌNH ---
-      
-      // 1. KHI ADMIN RESET LƯỢT MỚI (IDLE)
-      if (newState.status === GameStatus.IDLE) {
-        setScreen('WAITING');
-        setGuess('');
-        // Giữ lại EmployeeID nếu đã từng nhập để tiện cho lượt sau
-        if (foundMySub) setEmployeeId(foundMySub.employeeId);
-      } 
-
-      // 2. KHI ADMIN ĐÓNG LƯỢT (CLOSED)
-      else if (newState.status === GameStatus.CLOSED) {
-        // Kiểm tra xem đã gửi giá chưa
-        if (foundMySub && foundMySub.guess > 0) {
-          // Đã gửi giá -> Giữ ở SUCCESS
-          setScreen('SUCCESS');
-        } else {
-          // Chưa gửi giá -> Chuyển sang TIMEOUT
-          setScreen('TIMEOUT');
-        }
-      }
-
-      // 3. KHI ADMIN CÔNG BỐ (ANNOUNCED)
-      else if (newState.status === GameStatus.ANNOUNCED) {
-        // Chỉ chuyển sang RESULT nếu đã tham gia gửi giá
-        if (foundMySub && foundMySub.guess > 0) {
-          setScreen('RESULT');
-        } 
-        // Nếu đang ở TIMEOUT hoặc chưa tham gia thì không bắn event kết quả thắng/thua
-      }
-
-      // 4. KHI ADMIN ĐANG MỞ (OPEN)
-      else if (newState.status === GameStatus.OPEN) {
-        if (foundMySub && foundMySub.guess > 0) {
-          setScreen('SUCCESS');
-        }
-      }
-
-      lastStatus.current = newState.status;
-    });
-
-    return () => unsubscribe();
-  }, [deviceId]);
-
-  const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setError('');
-    const rawValue = e.target.value.replace(/\D/g, '');
-    if (rawValue === '') {
-      setGuess('');
-      return;
+  const refreshState = useCallback(() => {
+    const newState = gameService.getState();
+    setGameState(newState);
+    
+    // Nếu Admin reset game, đưa người chơi về màn hình chờ
+    if (newState.status === GameStatus.IDLE) {
+      setScreen('WAITING');
+      setMySubmission(null);
+      setError('');
+    } 
+    // Nếu có kết quả và người chơi này đã tham gia, chuyển đến màn hình kết quả
+    else if (newState.status === GameStatus.ANNOUNCED && mySubmission) {
+      setScreen('RESULT');
     }
-    const formatted = rawValue.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-    setGuess(formatted);
+  }, [mySubmission]);
+
+  useEffect(() => {
+    refreshState();
+    return gameService.subscribe(refreshState);
+  }, [refreshState]);
+
+  const handleStart = () => {
+    if (gameState.status === GameStatus.OPEN) {
+      setScreen('LOGIN');
+    }
   };
 
-  const handleLogin = async () => {
+  const handleLogin = () => {
+    setError('');
     const cleanId = employeeId.trim().toUpperCase();
     if (!cleanId) {
       setError('Vui lòng nhập mã nhân viên');
       return;
     }
-
-    setIsSubmitting(true);
-    setError('');
-
-    // Kiểm tra mã nhân viên đã có người dùng chưa (Chống trùng realtime)
-    const isIdTaken = (gameState.submissions || []).some(
-      s => s.employeeId.toUpperCase() === cleanId && s.deviceId !== deviceId
-    );
-
-    if (isIdTaken) {
-      setError(`Mã ${cleanId} đã được đăng ký bởi thiết bị khác!`);
-      setIsSubmitting(false);
+    
+    // KIỂM TRA TRÙNG: Nếu mã NV đã tồn tại trong hệ thống
+    const alreadyParticipated = gameState.submissions.find(s => s.employeeId === cleanId);
+    
+    if (alreadyParticipated) {
+      // Nếu trùng, thông báo và xóa trắng để nhập lại
+      setError('Mã nhân viên này đã có người sử dụng. Vui lòng nhập mã khác!');
+      setEmployeeId('');
+      
+      // Sau 3 giây tự động xóa thông báo lỗi để giao diện sạch sẽ
+      setTimeout(() => setError(''), 3000);
       return;
     }
 
-    try {
-      if (!mySubmission) {
-        const newLockEntry: Submission = {
-          employeeId: cleanId,
-          guess: 0,
-          timestamp: Date.now(),
-          deviceId: deviceId
-        };
-        await gameService.saveState({
-          ...gameState,
-          submissions: [...(gameState.submissions || []), newLockEntry]
-        });
-      }
-      setScreen('PRIZE_INFO');
-    } catch (err) {
-      setError('Lỗi kết nối. Thử lại sau.');
-    } finally {
-      setIsSubmitting(false);
-    }
+    setScreen('PRIZE_INFO');
   };
 
   const handleConfirmPrice = async () => {
-    if (gameState.status !== GameStatus.OPEN) {
+    // Kiểm tra Timeout ngay lập tức nếu Admin đóng lượt đoán
+    if (gameState.status === GameStatus.CLOSED) {
       setScreen('TIMEOUT');
       return;
     }
 
-    const numericGuess = parseInt(guess.replace(/\./g, ''));
+    const numericGuess = parseInt(parseNumberFromDots(guess));
     if (!numericGuess || numericGuess <= 0) {
-      setError('Vui lòng nhập giá dự đoán hợp lệ');
+      setError('Vui lòng nhập giá hợp lệ');
       return;
     }
 
     setIsSubmitting(true);
+    setError('');
+
     try {
-      const updatedSubmissions = (gameState.submissions || []).map(s => 
-        s.deviceId === deviceId ? { ...s, guess: numericGuess, timestamp: Date.now() } : s
-      );
-      
-      await gameService.saveState({
-        ...gameState,
-        submissions: updatedSubmissions
-      });
+      const newSubmission: Submission = {
+        employeeId: employeeId.trim().toUpperCase(),
+        guess: numericGuess,
+        timestamp: Date.now(),
+        deviceId: deviceId // Đính kèm mã thiết bị khi submit
+      };
+
+      await gameService.submitGuess(newSubmission);
+      setMySubmission(newSubmission);
       setScreen('SUCCESS');
-    } catch (err) {
-      setError('Không thể gửi giá. Thử lại sau.');
+    } catch (err: any) {
+      setError(err.message || 'Không thể gửi dự đoán. Thử lại sau.');
+      // Nếu lỗi do trùng (giả sử server trả về), reset về login
+      if (err.message?.includes('đã tham gia')) {
+        setTimeout(() => {
+          setScreen('LOGIN');
+          setEmployeeId('');
+          setError('');
+        }, 2000);
+      }
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const renderScreen = () => {
-    if (isCloudLoading) {
-      return (
-        <div className="flex flex-col items-center justify-center min-h-[70vh] text-center p-6">
-          <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
-          <p className="text-slate-500 font-bold italic">Đang đồng bộ Firebase...</p>
-        </div>
-      );
-    }
-
     switch (screen) {
       case 'WAITING':
         return (
-          <div className="flex flex-col items-center justify-center min-h-[70vh] text-center p-6 animate-in fade-in">
+          <div className="flex flex-col items-center justify-center min-h-[80vh] text-center p-6 animate-in fade-in duration-500">
             <div className="bg-blue-100 p-6 rounded-full mb-8 animate-bounce-subtle">
               <Gift className="w-16 h-16 text-blue-600" />
             </div>
-            <h1 className="text-3xl font-black text-slate-800 mb-4 uppercase tracking-tighter italic leading-none">
-              {gameState.options.eventName}<br/>
-              <span className="text-blue-600 text-xl">SỰ KIỆN TRỰC TIẾP</span>
+            <h1 className="text-3xl font-extrabold text-slate-800 mb-4 uppercase tracking-tight">
+              Chọn Giá Đúng<br/><span className="text-blue-600">Trúng Quà Ngay</span>
             </h1>
-            <p className="text-slate-500 mb-10 font-bold italic">Chào mừng bạn tham gia!</p>
+            <p className="text-slate-500 mb-10 text-lg">Chào mừng bạn đến với trò chơi!</p>
             
             {gameState.status === GameStatus.OPEN ? (
               <button 
-                onClick={() => setScreen('LOGIN')}
-                className="w-full py-5 bg-blue-600 text-white rounded-2xl text-xl font-black shadow-xl shadow-blue-200 active:scale-95 transition-all uppercase italic tracking-tighter"
+                onClick={handleStart}
+                className="w-full py-5 bg-blue-600 text-white rounded-2xl text-xl font-bold shadow-xl shadow-blue-200 active:scale-95 transition-all"
               >
-                VÀO CHƠI NGAY
+                BẮT ĐẦU THAM GIA
               </button>
             ) : (
-              <div className="flex flex-col items-center gap-4 bg-slate-50 p-6 rounded-[32px] border border-slate-100 w-full">
-                <Loader2 className="w-8 h-8 animate-spin text-slate-300" />
-                <p className="text-slate-400 font-black uppercase text-xs tracking-widest italic">Chờ MC mở lượt quà...</p>
+              <div className="flex items-center gap-3 bg-slate-100 px-6 py-4 rounded-2xl text-slate-600 font-medium italic">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                BTC chưa mở lượt đoán...
               </div>
             )}
           </div>
@@ -204,62 +168,57 @@ export const PlayerView: React.FC = () => {
 
       case 'LOGIN':
         return (
-          <div className="p-8 animate-in slide-in-from-bottom-6">
-            <div className="mb-10">
-              <h2 className="text-3xl font-black text-slate-900 mb-2 uppercase italic tracking-tighter">Định danh</h2>
-              <p className="text-slate-500 text-sm font-bold italic">Nhập mã nhân viên cực đậm để bắt đầu</p>
+          <div className="p-6 animate-in slide-in-from-right duration-300">
+            <div className="mb-8">
+              <h2 className="text-2xl font-bold text-slate-800 mb-2">Thông tin cá nhân</h2>
+              <p className="text-slate-500">Mã nhân viên của bạn là gì?</p>
             </div>
             <div className="relative mb-6">
-              <User className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400 w-6 h-6" />
+              <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
               <input 
                 type="text" 
                 value={employeeId}
-                onChange={(e) => {
-                  setEmployeeId(e.target.value.toUpperCase());
-                  setError('');
-                }}
-                disabled={isSubmitting}
-                placeholder="MÃ NHÂN VIÊN"
-                className="w-full pl-14 pr-6 py-6 bg-white border-4 rounded-[24px] text-2xl font-black outline-none transition-all text-slate-950 border-slate-100 focus:border-blue-500 focus:bg-blue-50/30 placeholder:text-slate-200"
+                onChange={(e) => setEmployeeId(e.target.value)}
+                placeholder="VD: NV1234"
+                className={`w-full pl-12 pr-4 py-5 bg-white border-2 rounded-2xl text-xl focus:ring-4 outline-none transition-all ${error ? 'border-red-500 focus:ring-red-50' : 'border-slate-200 focus:border-blue-500 focus:ring-blue-50'}`}
               />
             </div>
             {error && (
-              <div className="flex items-center gap-3 text-red-600 mb-6 font-black bg-red-100 p-5 rounded-2xl border-2 border-red-200 animate-in shake-1">
-                <AlertTriangle className="w-6 h-6 shrink-0" />
-                <span className="text-sm italic uppercase tracking-tight">{error}</span>
+              <div className="flex items-center gap-2 text-red-600 mb-6 font-bold bg-red-50 p-4 rounded-xl text-sm border border-red-100 animate-pulse">
+                <AlertTriangle className="w-5 h-5 shrink-0" />
+                {error}
               </div>
             )}
             <button 
               onClick={handleLogin}
-              disabled={isSubmitting}
-              className="w-full py-5 bg-slate-900 text-white rounded-[24px] text-xl font-black shadow-2xl active:scale-95 transition-all flex items-center justify-center gap-3 uppercase italic tracking-tighter"
+              className="w-full py-5 bg-slate-800 text-white rounded-2xl text-xl font-bold shadow-lg active:scale-95 transition-all"
             >
-              {isSubmitting ? <Loader2 className="w-6 h-6 animate-spin" /> : 'TIẾP TỤC'}
+              TIẾP TỤC
             </button>
           </div>
         );
 
       case 'PRIZE_INFO':
         return (
-          <div className="p-6 animate-in fade-in">
-            <div className="bg-white rounded-[40px] overflow-hidden shadow-2xl border-4 border-white mb-8">
+          <div className="p-6 animate-in slide-in-from-right duration-300">
+            <h2 className="text-2xl font-bold text-slate-800 mb-6">Thông tin món quà</h2>
+            <div className="bg-white rounded-3xl overflow-hidden shadow-sm border border-slate-100 mb-8">
               <img 
-                src={gameState.prize?.imageUrl || 'https://images.unsplash.com/photo-1695048133142-1a20484d2569?auto=format&fit=crop&q=80&w=800'} 
+                src={gameState.prize?.imageUrl || 'https://picsum.photos/400/400?grayscale'} 
                 alt="Prize" 
                 className="w-full h-64 object-cover"
               />
-              <div className="p-8">
-                <h3 className="text-2xl font-black text-blue-600 mb-2 uppercase italic tracking-tighter leading-none">{gameState.prize?.name}</h3>
-                <p className="text-slate-500 font-bold text-sm mb-6 italic leading-relaxed">{gameState.prize?.description}</p>
-                <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 text-[10px] text-emerald-700 font-black uppercase tracking-widest flex items-center gap-3">
-                  <CheckCircle className="w-4 h-4 shrink-0" />
-                  <span>Đã khóa mã: {employeeId}</span>
+              <div className="p-6">
+                <h3 className="text-xl font-bold text-blue-600 mb-2">{gameState.prize?.name}</h3>
+                <p className="text-slate-600 mb-4">{gameState.prize?.description}</p>
+                <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 text-sm text-blue-800 font-medium">
+                  💡 Giá thật sẽ được công bố sau khi kết thúc lượt đoán.
                 </div>
               </div>
             </div>
             <button 
               onClick={() => setScreen('INPUT_PRICE')}
-              className="w-full py-5 bg-blue-600 text-white rounded-[24px] text-xl font-black shadow-xl active:scale-95 transition-all uppercase italic tracking-tighter"
+              className="w-full py-5 bg-blue-600 text-white rounded-2xl text-xl font-bold shadow-lg active:scale-95 transition-all"
             >
               NHẬP GIÁ DỰ ĐOÁN
             </button>
@@ -268,109 +227,124 @@ export const PlayerView: React.FC = () => {
 
       case 'INPUT_PRICE':
         return (
-          <div className="p-8 animate-in slide-in-from-right-8">
-             <div className="mb-10">
-              <h2 className="text-3xl font-black text-slate-900 mb-2 uppercase italic tracking-tighter">Dự đoán giá</h2>
-              <p className="text-slate-500 text-sm font-bold italic">Nhập giá bạn cho là đúng nhất</p>
+          <div className="p-6 animate-in slide-in-from-right duration-300">
+             <div className="mb-8">
+              <h2 className="text-2xl font-bold text-slate-800 mb-2">Dự đoán của bạn</h2>
+              <p className="text-slate-500">Hãy nhập con số bạn cho là đúng nhất</p>
             </div>
-            <div className="relative mb-8">
-              <span className="absolute left-6 top-1/2 -translate-y-1/2 text-3xl font-black text-slate-300">₫</span>
+            <div className="relative mb-6">
+              <span className="absolute left-6 top-1/2 -translate-y-1/2 text-2xl font-bold text-slate-400">₫</span>
               <input 
                 type="text" 
-                inputMode="numeric"
-                value={guess}
-                onChange={handlePriceChange}
-                disabled={isSubmitting}
+                value={formatNumberWithDots(guess)}
+                onChange={(e) => setGuess(parseNumberFromDots(e.target.value))}
                 placeholder="0"
-                className="w-full pl-16 pr-6 py-8 bg-white border-4 border-slate-100 rounded-[32px] text-4xl font-black focus:border-blue-600 focus:bg-blue-50/20 outline-none transition-all text-blue-600 placeholder:text-slate-100"
+                className="w-full pl-14 pr-4 py-8 bg-white border-2 border-slate-200 rounded-2xl text-4xl font-black focus:border-blue-500 focus:ring-4 focus:ring-blue-50 outline-none transition-all text-blue-600"
               />
             </div>
-            {error && <p className="text-red-500 mb-6 font-black bg-red-50 p-4 rounded-xl text-center text-xs italic uppercase">{error}</p>}
+            <div className="flex gap-2 text-amber-600 bg-amber-50 p-4 rounded-xl mb-8 items-start">
+              <Clock className="w-5 h-5 flex-shrink-0 mt-0.5" />
+              <p className="text-sm font-medium leading-relaxed">Lưu ý: Giá đã xác nhận sẽ không thể thay đổi. Hãy kiểm tra kỹ!</p>
+            </div>
+            {error && <p className="text-red-500 mb-6 font-medium bg-red-50 p-3 rounded-lg text-center">{error}</p>}
             <button 
               onClick={handleConfirmPrice}
-              disabled={isSubmitting || !guess}
-              className="w-full py-6 bg-blue-600 text-white rounded-[24px] text-xl font-black shadow-2xl active:scale-95 transition-all flex items-center justify-center gap-3 uppercase italic tracking-tighter"
+              disabled={isSubmitting}
+              className="w-full py-5 bg-blue-600 text-white rounded-2xl text-xl font-bold shadow-lg active:scale-95 transition-all disabled:opacity-50"
             >
-              {isSubmitting ? <Loader2 className="w-7 h-7 animate-spin" /> : 'GỬI KẾT QUẢ'}
+              {isSubmitting ? 'ĐANG GỬI...' : 'XÁC NHẬN GIÁ'}
             </button>
           </div>
         );
 
       case 'SUCCESS':
         return (
-          <div className="p-8 flex flex-col items-center text-center animate-in zoom-in">
-            <div className="bg-emerald-100 p-8 rounded-full mb-10 mt-10">
-              <CheckCircle className="w-20 h-20 text-emerald-600" />
+          <div className="p-6 flex flex-col items-center text-center animate-in fade-in duration-700">
+            <div className="bg-green-100 p-6 rounded-full mb-8 mt-10">
+              <CheckCircle className="w-16 h-16 text-green-600" />
             </div>
-            <h2 className="text-3xl font-black text-slate-900 mb-2 uppercase italic tracking-tighter">Đã gửi thành công!</h2>
-            <p className="text-slate-400 mb-10 font-bold italic uppercase text-xs tracking-widest">Đang chờ BTC công bố kết quả...</p>
+            <h2 className="text-2xl font-bold text-slate-800 mb-2">Đã ghi nhận thành công!</h2>
+            <p className="text-slate-500 mb-8">Hệ thống đã nhận được dự đoán của bạn.</p>
             
-            <div className="w-full bg-slate-900 p-8 rounded-[40px] text-left shadow-2xl relative overflow-hidden">
-              <div className="absolute top-0 right-0 p-4 opacity-5 text-white"><DollarSign className="w-20 h-20" /></div>
-              <div className="space-y-6 relative z-10">
-                <div>
-                  <p className="text-blue-400 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Mã nhân viên</p>
-                  <p className="text-white font-black text-2xl tracking-tight">{mySubmission?.employeeId}</p>
-                </div>
-                <div>
-                  <p className="text-blue-400 text-[10px] font-black uppercase tracking-[0.2em] mb-1">Giá đã gửi</p>
-                  <p className="text-white font-black text-4xl tracking-tighter">{mySubmission && formatVND(mySubmission.guess)}</p>
-                </div>
+            <div className="w-full bg-slate-50 border border-slate-200 rounded-3xl p-6 mb-8 text-left space-y-4 shadow-inner">
+              <div className="flex justify-between items-center pb-4 border-b border-slate-200">
+                <span className="text-slate-500 font-medium">Mã nhân viên</span>
+                <span className="text-slate-800 font-bold">{mySubmission?.employeeId}</span>
               </div>
+              <div className="flex justify-between items-center pb-4 border-b border-slate-200">
+                <span className="text-slate-500 font-medium">Giá đã nhập</span>
+                <span className="text-blue-600 font-black text-xl">{mySubmission && formatVND(mySubmission.guess)}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Mã thiết bị</span>
+                <span className="text-[10px] text-slate-400 font-mono">{deviceId.substring(0, 8)}...</span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 bg-white border border-slate-200 shadow-sm px-6 py-4 rounded-2xl text-slate-600 font-medium">
+              <Loader2 className="w-5 h-5 animate-spin text-blue-500" />
+              Vui lòng theo dõi kết quả trên sân khấu
             </div>
           </div>
         );
 
       case 'TIMEOUT':
         return (
-          <div className="p-8 flex flex-col items-center text-center animate-in fade-in duration-500">
-            <div className="bg-red-100 p-8 rounded-full mb-10 mt-10">
-              <TimerOff className="w-20 h-20 text-red-600" />
+          <div className="p-6 flex flex-col items-center text-center animate-in fade-in duration-700 min-h-[80vh] justify-center">
+            <div className="bg-red-100 p-8 rounded-full mb-8">
+              <Hourglass className="w-20 h-20 text-red-600 animate-pulse" />
             </div>
-            <h2 className="text-3xl font-black text-slate-900 mb-4 uppercase italic tracking-tighter">HẾT THỜI GIAN!</h2>
-            <p className="text-slate-500 mb-10 font-bold italic px-4">
-              Bạn chưa kịp gửi giá dự đoán trong lượt này. Vui lòng tham gia ở lượt quà tiếp theo!
+            <h2 className="text-3xl font-black text-slate-800 mb-4 uppercase tracking-tighter">HẾT GIỜ RỒI!</h2>
+            <p className="text-slate-600 text-lg mb-10 leading-relaxed italic">
+              Rất tiếc, BTC đã đóng cổng nhận dự đoán.<br/>Hãy chuẩn bị cho lượt quà tiếp theo nhé!
             </p>
-            <div className="w-full bg-slate-50 border-2 border-dashed border-slate-200 p-8 rounded-[40px]">
-               <Loader2 className="w-6 h-6 animate-spin text-slate-300 mx-auto mb-4" />
-               <p className="text-slate-400 font-black uppercase text-[10px] tracking-widest italic">Chờ MC mở lượt quà mới...</p>
-            </div>
+            <button 
+              onClick={() => setScreen('WAITING')}
+              className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold text-lg shadow-lg active:scale-95 transition-all"
+            >
+              VỀ MÀN HÌNH CHỜ
+            </button>
           </div>
         );
 
       case 'RESULT':
-        const isWinner = gameState.winner?.deviceId === deviceId;
+        // KIỂM TRA TRÚNG THƯỞNG DỰA TRÊN DEVICE ID
+        const isWinnerDevice = gameState.winner?.deviceId === deviceId;
+        const isWinnerID = gameState.winner?.employeeId === mySubmission?.employeeId;
+        const isActuallyWinning = isWinnerDevice || isWinnerID;
+
         return (
-          <div className="p-8 flex flex-col items-center text-center animate-in fade-in duration-1000">
-             {isWinner ? (
-               <div className="w-full">
-                 <div className="bg-yellow-400 p-10 rounded-full mb-10 mt-10 animate-bounce mx-auto w-fit shadow-[0_20px_50px_rgba(250,204,21,0.5)]">
-                    <PartyPopper className="w-24 h-24 text-slate-900" />
+          <div className="p-6 flex flex-col items-center text-center animate-in zoom-in duration-500">
+             {isActuallyWinning ? (
+               <>
+                 <div className="bg-yellow-100 p-8 rounded-full mb-8 mt-10 animate-bounce shadow-lg shadow-yellow-100/50">
+                    <Trophy className="w-20 h-20 text-yellow-600" />
                  </div>
-                 <h2 className="text-5xl font-black text-slate-950 mb-4 italic tracking-tighter uppercase leading-none">CHÚC MỪNG BẠN!</h2>
-                 <p className="text-2xl font-black text-blue-600 mb-10 uppercase italic tracking-tight">LÀ NGƯỜI CHIẾN THẮNG</p>
-                 
-                 <div className="bg-slate-950 p-10 rounded-[50px] shadow-2xl text-white border-4 border-yellow-400 relative">
-                    <div className="absolute -top-4 -right-4 bg-yellow-400 p-3 rounded-2xl shadow-lg"><Trophy className="w-8 h-8 text-slate-950" /></div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.3em] mb-4 text-yellow-400 opacity-80">Giá niêm yết chính xác</p>
-                    <p className="text-5xl font-black tracking-tighter text-yellow-400">
+                 <h2 className="text-4xl font-black text-slate-800 mb-4 tracking-tighter">BẠN ĐÃ CHIẾN THẮNG!</h2>
+                 <p className="text-slate-600 text-lg mb-8 leading-relaxed">Xin chúc mừng! Bạn là người có dự đoán chính xác nhất lượt này.</p>
+                 <div className="bg-yellow-50 border-4 border-yellow-400 p-6 rounded-[32px] w-full shadow-xl">
+                    <p className="text-yellow-800 font-black uppercase text-xs tracking-widest mb-2">Giá niêm yết từ BTC</p>
+                    <p className="text-4xl font-black text-yellow-600 italic tracking-tighter">
                       {gameState.prize && formatVND(gameState.prize.realPrice)}
                     </p>
                  </div>
-                 <p className="mt-10 font-black text-slate-400 uppercase text-xs italic">Vui lòng lên sân khấu nhận giải!</p>
-               </div>
+                 <p className="mt-8 text-slate-400 text-xs font-bold uppercase tracking-widest">Hãy mang thiết bị này lên sân khấu nhận quà!</p>
+               </>
              ) : (
-               <div className="w-full">
-                 <div className="bg-slate-100 p-10 rounded-full mb-10 mt-10 mx-auto w-fit">
-                    <Gift className="w-20 h-20 text-slate-300" />
+               <>
+                 <div className="bg-slate-100 p-8 rounded-full mb-8 mt-10 opacity-60">
+                    <Frown className="w-20 h-20 text-slate-400" />
                  </div>
-                 <h2 className="text-3xl font-black text-slate-400 mb-4 uppercase italic tracking-tighter leading-none">CHIA BUỒN!</h2>
-                 <p className="text-slate-500 mb-12 font-bold italic">Rất tiếc, bạn chưa trúng giải lần này.</p>
-                 <div className="bg-white border-4 border-slate-50 p-10 rounded-[50px] text-slate-900 shadow-xl">
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] mb-3 text-slate-400">Giá đúng từ BTC</p>
-                    <p className="text-4xl font-black tracking-tighter text-slate-950">{gameState.prize && formatVND(gameState.prize.realPrice)}</p>
+                 <h2 className="text-3xl font-bold text-slate-800 mb-4">CHƯA MAY MẮN RỒI!</h2>
+                 <p className="text-slate-600 text-lg mb-8 leading-relaxed italic">Cảm ơn bạn đã tham gia. Giá bạn dự đoán chưa sát với giá thực tế nhất.</p>
+                 <div className="bg-slate-50 border border-slate-200 p-6 rounded-[32px] w-full opacity-70">
+                    <p className="text-slate-500 font-bold mb-1 uppercase text-[10px] tracking-widest">Giá niêm yết từ BTC</p>
+                    <p className="text-3xl font-black text-slate-800 italic tracking-tighter">
+                      {gameState.prize && formatVND(gameState.prize.realPrice)}
+                    </p>
                  </div>
-               </div>
+                 <p className="mt-8 text-blue-600 font-black uppercase tracking-tighter text-sm">Cố gắng ở lượt quà tiếp theo nhé!</p>
+               </>
              )}
           </div>
         );
@@ -381,22 +355,17 @@ export const PlayerView: React.FC = () => {
   };
 
   return (
-    <div className="max-w-md mx-auto min-h-screen bg-white shadow-2xl relative flex flex-col overflow-hidden">
-      <header className="p-6 bg-white border-b border-slate-50 flex items-center justify-between sticky top-0 z-20">
-        <span className="font-black text-lg tracking-tighter text-blue-600 italic uppercase">
-          {gameState.options.eventName}
-        </span>
-        <div className="flex items-center gap-3 bg-slate-900 px-4 py-2 rounded-2xl text-[10px] font-black text-white uppercase tracking-widest shadow-lg">
-           <div className={`w-2 h-2 rounded-full ${gameState.status === GameStatus.OPEN ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`}></div>
+    <div className="max-w-md mx-auto min-h-screen bg-slate-50 shadow-2xl relative flex flex-col">
+      <header className="p-6 bg-white border-b border-slate-100 flex items-center justify-between sticky top-0 z-50">
+        <span className="font-black text-lg tracking-tighter text-blue-600 italic">CHỌN GIÁ ĐÚNG</span>
+        <div className="flex items-center gap-1 bg-slate-100 px-3 py-1 rounded-full text-[10px] font-black text-slate-500 uppercase tracking-widest">
+           <div className={`w-1.5 h-1.5 rounded-full ${gameState.status === GameStatus.OPEN ? 'bg-green-500 animate-pulse' : 'bg-slate-300'}`}></div>
            {gameState.status}
         </div>
       </header>
-      <main className="flex-1 overflow-y-auto custom-scrollbar">
+      <main className="flex-1 mobile-height">
         {renderScreen()}
       </main>
-      <footer className="p-4 text-center opacity-10">
-        <p className="text-[8px] font-bold uppercase tracking-widest">Device ID: {deviceId.substring(0, 12)}</p>
-      </footer>
     </div>
   );
 };

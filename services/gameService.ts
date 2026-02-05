@@ -1,23 +1,22 @@
 
-import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, onSnapshot } from "firebase/firestore";
-import { GameState, GameStatus, Submission, RoundResult, AppOptions } from '../types';
+import PocketBase from 'pocketbase';
+import { GameState, GameStatus, Submission, RoundResult, AppOptions, Prize } from '../types';
 
-const firebaseConfig = {
-  apiKey: "AIzaSyD4G9RqK1mjroBRmbHalOkwuph8W2ilRzE",
-  authDomain: "haychongiadung-ptc.firebaseapp.com",
-  projectId: "haychongiadung-ptc",
-  storageBucket: "haychongiadung-ptc.firebasestorage.app",
-  messagingSenderId: "954923411067",
-  appId: "1:954923411067:web:947062af0ad62fa533e4de",
-  measurementId: "G-92BYGRYNLH"
+const PB_URL = 'https://afe4-2001-ee0-553b-c480-61f5-fd99-b4c6-c10a.ngrok-free.app';
+const pb = new PocketBase(PB_URL);
+
+// Tắt tự động hủy request để tránh lỗi "autocancelled" trong React StrictMode
+pb.autoCancellation(false);
+
+/**
+ * Các Keys định danh trong bảng app_data
+ */
+const KEYS = {
+  SETTINGS: 'game_settings',
+  SUBMISSIONS: 'game_submissions',
+  HISTORY: 'game_history'
 };
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const stateDocRef = doc(db, 'game', 'globalState');
-
-const DEVICE_ID_KEY = 'CHON_GIA_DUNG_DEVICE_ID';
 const DEFAULT_OPTIONS: AppOptions = {
   eventName: 'CHỌN GIÁ ĐÚNG',
   orgName: 'AI-EVENT-TECH',
@@ -25,7 +24,7 @@ const DEFAULT_OPTIONS: AppOptions = {
   showQR: true
 };
 
-const DEFAULT_STATE: GameState = {
+let currentLocalState: GameState = {
   status: GameStatus.IDLE,
   prize: null,
   submissions: [],
@@ -34,133 +33,249 @@ const DEFAULT_STATE: GameState = {
   options: DEFAULT_OPTIONS
 };
 
-let currentState: GameState = DEFAULT_STATE;
-let errorListener: ((err: string | null) => void) | null = null;
-let connectionListener: (() => void) | null = null;
+let isInitializing = false;
+let isInitialized = false;
+
+const listeners: Set<(state: GameState) => void> = new Set();
 
 export const gameService = {
-  getDeviceId(): string {
-    let id = localStorage.getItem(DEVICE_ID_KEY);
-    if (!id) {
-      id = 'dev_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
-      localStorage.setItem(DEVICE_ID_KEY, id);
-    }
-    return id;
-  },
+  async init() {
+    if (isInitialized || isInitializing) return;
+    isInitializing = true;
 
-  onError(callback: (err: string | null) => void) {
-    errorListener = callback;
-  },
-
-  onConnected(callback: () => void) {
-    connectionListener = callback;
-  },
-
-  subscribeToState(callback: (state: GameState) => void) {
-    return onSnapshot(stateDocRef, (snapshot) => {
-      const data = snapshot.data() as GameState;
-      if (data) {
-        currentState = {
-          ...DEFAULT_STATE,
-          ...data,
-          submissions: data.submissions || [],
-          history: data.history || [],
-          options: { ...DEFAULT_OPTIONS, ...data.options }
-        };
-        callback(currentState);
-        
-        // Notify success if previously had an error or just connected
-        if (errorListener) errorListener(null);
-        if (connectionListener) connectionListener();
-      } else {
-        // First time initialization
-        this.saveState(DEFAULT_STATE);
-      }
-    }, (error) => {
-      console.error("Firestore Subscribe Error:", error);
-      if (errorListener) {
-        let msg = "Lỗi kết nối Cloud.";
-        if (error.code === 'permission-denied') {
-          msg = "Firestore API chưa được kích hoạt hoặc Rules bị chặn. Hãy kiểm tra lại Firebase Console.";
+    try {
+      // 1. Auth (Hỗ trợ cả superusers và admins cũ)
+      try {
+        await pb.collection('_superusers').authWithPassword('vippro21295@gmail.com', 'K4FUj6heBMCyHM9');
+      } catch (e) {
+        try {
+          // @ts-ignore
+          await pb.admins.authWithPassword('vippro21295@gmail.com', 'K4FUj6heBMCyHM9');
+        } catch (e2) {
+          console.warn("PB Auth failed, continuing as guest/public if allowed.");
         }
-        errorListener(msg);
       }
-    });
+
+      // 2. Đảm bảo collection app_data tồn tại
+      await this.ensureAppDataCollection();
+
+      // 3. Khởi tạo các bản ghi Key-Value mặc định nếu chưa có
+      await this.initializeKeys();
+
+      // 4. Đồng bộ dữ liệu ban đầu
+      await this.syncAll();
+
+      // 5. Subscribe Realtime
+      pb.collection('app_data').subscribe('*', (e) => {
+        if (Object.values(KEYS).includes(e.record.key)) {
+          this.syncAll();
+        }
+      });
+      
+      isInitialized = true;
+      console.log('PocketBase (Key-Value Mode): Ready.');
+    } catch (error: any) {
+      if (!error.isAbort) {
+        console.error('Init Error:', error);
+      }
+    } finally {
+      isInitializing = false;
+    }
+  },
+
+  async ensureAppDataCollection() {
+    try {
+      const collections = await pb.collections.getFullList();
+      if (!collections.find(c => c.name === 'app_data')) {
+        await pb.collections.create({
+          name: 'app_data',
+          type: 'base',
+          schema: [
+            { name: 'key', type: 'text', required: true, unique: true },
+            { name: 'value', type: 'json' }
+          ],
+          listRule: "", viewRule: "", createRule: "", updateRule: ""
+        });
+      }
+    } catch (e) {}
+  },
+
+  async initializeKeys() {
+    const checkAndCreate = async (key: string, defaultValue: any) => {
+      try {
+        await pb.collection('app_data').getFirstListItem(`key="${key}"`);
+      } catch (err: any) {
+        if (err.status === 404) {
+          await pb.collection('app_data').create({ key, value: defaultValue });
+        }
+      }
+    };
+
+    await Promise.all([
+      checkAndCreate(KEYS.SETTINGS, { status: GameStatus.IDLE, prize: null, winner_id: null, options: DEFAULT_OPTIONS }),
+      checkAndCreate(KEYS.SUBMISSIONS, []),
+      checkAndCreate(KEYS.HISTORY, [])
+    ]);
+  },
+
+  async syncAll() {
+    try {
+      const records = await pb.collection('app_data').getFullList();
+      
+      const getVal = (key: string) => records.find(r => r.key === key)?.value;
+
+      const settings = getVal(KEYS.SETTINGS) || {};
+      const subs = getVal(KEYS.SUBMISSIONS) || [];
+      const history = getVal(KEYS.HISTORY) || [];
+
+      const mappedSubmissions: Submission[] = subs.map((s: any) => ({
+        employeeId: s.employeeId,
+        guess: Number(s.guess),
+        timestamp: s.timestamp,
+        deviceId: s.deviceId || '' // Đồng bộ deviceId
+      }));
+
+      currentLocalState = {
+        status: settings.status || GameStatus.IDLE,
+        prize: settings.prize || null,
+        submissions: mappedSubmissions,
+        winner: settings.winner_id ? mappedSubmissions.find(s => s.employeeId === settings.winner_id) || null : null,
+        history: history,
+        options: settings.options || DEFAULT_OPTIONS
+      };
+
+      this.notify();
+    } catch (err: any) {
+      // Bỏ qua log nếu lỗi do hủy request chủ động
+      if (!err.isAbort) {
+        console.error("Sync Error:", err.message);
+      }
+    }
   },
 
   getState(): GameState {
-    return currentState;
+    return currentLocalState;
   },
 
-  async saveState(state: GameState) {
+  // Fix: Ensure the cleanup function returns void to satisfy React's EffectCallback type.
+  // Set.prototype.delete returns a boolean, which causes Type mismatch in useEffect cleanups.
+  subscribe(callback: (state: GameState) => void) {
+    listeners.add(callback);
+    return () => {
+      listeners.delete(callback);
+    };
+  },
+
+  notify() {
+    listeners.forEach(cb => cb(currentLocalState));
+    window.dispatchEvent(new Event('storage'));
+  },
+
+  async updateValueByKey(key: string, newValue: any) {
     try {
-      await setDoc(stateDocRef, state);
-      if (errorListener) errorListener(null);
-    } catch (error: any) {
-      console.error("Firestore Save Error:", error);
-      if (errorListener) {
-        errorListener(error.code === 'permission-denied' 
-          ? "Lỗi: Không có quyền ghi. Hãy kiểm tra lại Firestore Rules." 
-          : "Lỗi lưu dữ liệu.");
+      const record = await pb.collection('app_data').getFirstListItem(`key="${key}"`);
+      await pb.collection('app_data').update(record.id, { value: newValue });
+    } catch (err: any) {
+      if (!err.isAbort) {
+        console.error(`Update Error (Key: ${key}):`, err.data || err.message);
       }
+      throw err;
     }
   },
 
-  updateOptions(options: Partial<AppOptions>) {
-    const state = this.getState();
-    this.saveState({
-      ...state,
-      options: { ...state.options, ...options }
-    });
+  async saveState(state: Partial<GameState>) {
+    const record = await pb.collection('app_data').getFirstListItem(`key="${KEYS.SETTINGS}"`);
+    const currentSettings = record.value;
+    
+    const updatedSettings = {
+      ...currentSettings,
+      status: state.status !== undefined ? state.status : currentSettings.status,
+      prize: state.prize !== undefined ? state.prize : currentSettings.prize,
+      winner_id: state.winner !== undefined ? state.winner?.employeeId : currentSettings.winner_id,
+      options: state.options !== undefined ? state.options : currentSettings.options
+    };
+
+    await pb.collection('app_data').update(record.id, { value: updatedSettings });
   },
 
-  resetGame() {
-    this.saveState(DEFAULT_STATE);
+  async submitGuess(submission: Submission) {
+    const record = await pb.collection('app_data').getFirstListItem(`key="${KEYS.SUBMISSIONS}"`);
+    const currentSubs = Array.isArray(record.value) ? record.value : [];
+    
+    // Kiểm tra trùng ID (Server-side check dự phòng)
+    if (currentSubs.some((s: any) => s.employeeId === submission.employeeId)) {
+      throw new Error('Mã nhân viên này đã tham gia dự đoán.');
+    }
+
+    const updatedSubs = [...currentSubs, {
+      employeeId: submission.employeeId,
+      guess: Number(submission.guess),
+      timestamp: Date.now(),
+      deviceId: submission.deviceId // Lưu deviceId vào DB
+    }];
+
+    await pb.collection('app_data').update(record.id, { value: updatedSubs });
   },
 
-  prepareNewRound() {
-    const state = this.getState();
-    const newHistory = [...state.history];
+  async updateOptions(options: Partial<AppOptions>) {
+    const record = await pb.collection('app_data').getFirstListItem(`key="${KEYS.SETTINGS}"`);
+    const currentSettings = record.value;
+    
+    const updatedSettings = {
+      ...currentSettings,
+      options: { ...currentSettings.options, ...options }
+    };
 
+    await pb.collection('app_data').update(record.id, { value: updatedSettings });
+  },
+
+  async resetGame() {
+    await Promise.all([
+      this.updateValueByKey(KEYS.SETTINGS, { 
+        status: GameStatus.IDLE, 
+        prize: null, 
+        winner_id: null, 
+        options: currentLocalState.options 
+      }),
+      this.updateValueByKey(KEYS.SUBMISSIONS, [])
+    ]);
+  },
+
+  async prepareNewRound() {
+    const state = currentLocalState;
     if (state.status === GameStatus.ANNOUNCED && state.winner && state.prize) {
-      const result: RoundResult = {
+      const record = await pb.collection('app_data').getFirstListItem(`key="${KEYS.HISTORY}"`);
+      const currentHistory = Array.isArray(record.value) ? record.value : [];
+      
+      const newHistoryItem: RoundResult = {
         prizeName: state.prize.name,
         realPrice: state.prize.realPrice,
         winnerId: state.winner.employeeId,
         winnerGuess: state.winner.guess,
         timestamp: Date.now()
       };
-      newHistory.unshift(result);
-    }
 
-    this.saveState({
-      ...DEFAULT_STATE,
-      history: newHistory,
-      options: state.options
-    });
+      await pb.collection('app_data').update(record.id, { value: [newHistoryItem, ...currentHistory].slice(0, 50) });
+    }
+    await this.resetGame();
   },
 
   calculateWinner(state: GameState): Submission | null {
-    if (!state.prize || !state.submissions || state.submissions.length === 0) return null;
+    if (!state.prize || state.submissions.length === 0) return null;
+    const realPrice = Number(state.prize.realPrice);
+    
+    let closest = state.submissions[0];
+    let minDiff = Math.abs(Number(closest.guess) - realPrice);
 
-    const realPrice = state.prize.realPrice;
-    const sortedSubmissions = [...state.submissions].sort((a, b) => a.timestamp - b.timestamp);
-
-    const exactMatches = sortedSubmissions.filter(s => s.guess === realPrice);
-    if (exactMatches.length > 0) return exactMatches[0];
-
-    let closest = sortedSubmissions[0];
-    let minDiff = Math.abs(closest.guess - realPrice);
-
-    for (let i = 1; i < sortedSubmissions.length; i++) {
-      const current = sortedSubmissions[i];
-      const currentDiff = Math.abs(current.guess - realPrice);
-      if (currentDiff < minDiff) {
-        minDiff = currentDiff;
-        closest = current;
+    for (const sub of state.submissions) {
+      const diff = Math.abs(Number(sub.guess) - realPrice);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closest = sub;
+      } else if (diff === minDiff) {
+        if (sub.timestamp < closest.timestamp) closest = sub;
       }
     }
-
     return closest;
   }
 };

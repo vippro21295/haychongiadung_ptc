@@ -17,7 +17,7 @@ export interface Submission {
   employeeId: string;
   guess: number;
   timestamp: number;
-  deviceId: string; // Thêm định danh thiết bị
+  deviceId: string; // Thêm mã định danh thiết bị
 }
 
 export interface RoundResult {

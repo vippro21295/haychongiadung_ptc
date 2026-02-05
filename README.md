@@ -1,24 +1,20 @@
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+</div>
 
-# 🎁 Chọn Giá Đúng - Realtime Event App (Firebase Edition)
+# Run and deploy your AI Studio app
 
-Ứng dụng web thời gian thực phục vụ các sự kiện, cho phép nhiều người chơi cùng lúc dự đoán giá sản phẩm và đồng bộ kết quả tức thì qua Firebase Cloud.
+This contains everything you need to run your app locally.
 
-## 🚀 Tính năng nổi bật
-- **Realtime Sync:** Admin mở lượt, toàn bộ điện thoại người chơi tự động chuyển màn hình.
-- **Winner Notification:** Tự động gửi thông báo và rung máy (vibrate) cho người thắng cuộc.
-- **Public Display:** Giao diện màn hình lớn hiển thị biểu đồ xu hướng giá đang đổ về.
-- **Firebase Backend:** Sử dụng Firebase Realtime Database cho tốc độ phản hồi cực nhanh.
+View your app in AI Studio: https://ai.studio/apps/drive/1pPRFkqhK6VcoNCrbOEgYzVU1vKsC5W7d
 
-## 🛠 Hướng dẫn cài đặt & Deploy
-1. **GitHub:** Tạo repo mới và đẩy code này lên.
-2. **Vercel:** Kết nối repo GitHub với Vercel để nhận link Public.
-3. **Cấu hình:** File `services/gameService.ts` đã chứa sẵn cấu hình Firebase.
+## Run Locally
 
-## 📱 Cách truy cập các Mode
-- **Người chơi:** `https://your-app.vercel.app/`
-- **Admin:** `https://your-app.vercel.app/#admin` (Pass: `admin123`)
-- **Màn hình lớn:** `https://your-app.vercel.app/#public`
-- **MC/Announcer:** `https://your-app.vercel.app/#announcer`
+**Prerequisites:**  Node.js
 
----
-*Powered by AI-EVENT-TECH*
+
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`
