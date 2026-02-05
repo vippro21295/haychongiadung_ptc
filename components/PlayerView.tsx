@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { GameState, GameStatus, PlayerScreen, Submission } from '../types';
 import { gameService } from '../services/gameService';
 import { formatVND, formatTime, formatNumberWithDots, parseNumberFromDots } from './Formatters';
-import { CheckCircle, Trophy, Clock, User, DollarSign, Gift, Loader2, AlertTriangle, Frown, Hourglass } from 'lucide-react';
+import { CheckCircle, Trophy, Clock, User, DollarSign, Gift, Loader2, AlertTriangle, Frown, Hourglass, Calendar } from 'lucide-react';
 
 /**
  * Hàm lấy hoặc tạo mã thiết bị duy nhất cho máy khách
@@ -308,34 +308,67 @@ export const PlayerView: React.FC = () => {
         );
 
       case 'RESULT':
-        // KIỂM TRA TRÚNG THƯỞNG DỰA TRÊN DEVICE ID
+        // KIỂM TRA TRÚNG THƯỞNG DỰA TRÊN DEVICE ID HOẶC ID NHÂN VIÊN
         const isWinnerDevice = gameState.winner?.deviceId === deviceId;
         const isWinnerID = gameState.winner?.employeeId === mySubmission?.employeeId;
         const isActuallyWinning = isWinnerDevice || isWinnerID;
 
         return (
-          <div className="p-6 flex flex-col items-center text-center animate-in zoom-in duration-500">
+          <div className="p-6 pb-20 flex flex-col items-center text-center animate-in zoom-in duration-500 overflow-y-auto max-h-full">
              {isActuallyWinning ? (
                <>
                  <div className="bg-yellow-100 p-8 rounded-full mb-8 mt-10 animate-bounce shadow-lg shadow-yellow-100/50">
                     <Trophy className="w-20 h-20 text-yellow-600" />
                  </div>
-                 <h2 className="text-4xl font-black text-slate-800 mb-4 tracking-tighter">BẠN ĐÃ CHIẾN THẮNG!</h2>
-                 <p className="text-slate-600 text-lg mb-8 leading-relaxed">Xin chúc mừng! Bạn là người có dự đoán chính xác nhất lượt này.</p>
-                 <div className="bg-yellow-50 border-4 border-yellow-400 p-6 rounded-[32px] w-full shadow-xl">
-                    <p className="text-yellow-800 font-black uppercase text-xs tracking-widest mb-2">Giá niêm yết từ BTC</p>
-                    <p className="text-4xl font-black text-yellow-600 italic tracking-tighter">
-                      {gameState.prize && formatVND(gameState.prize.realPrice)}
-                    </p>
+                 <h2 className="text-4xl font-black text-slate-800 mb-2 tracking-tighter">XIN CHÚC MỪNG!</h2>
+                 <p className="text-slate-600 text-lg mb-8 leading-relaxed font-bold italic">Bạn đã chiến thắng lượt quà này!</p>
+                 
+                 {/* Thông tin đối soát cho người thắng */}
+                 <div className="w-full bg-white border-4 border-yellow-400 rounded-[32px] p-6 shadow-2xl text-left space-y-5">
+                    <div className="flex justify-between items-center pb-3 border-b border-yellow-100">
+                      <div className="flex items-center gap-2">
+                        <User className="w-4 h-4 text-slate-400" />
+                        <span className="text-slate-500 font-bold uppercase text-[10px] tracking-widest">Mã nhân viên</span>
+                      </div>
+                      <span className="text-slate-900 font-black text-xl">{gameState.winner?.employeeId}</span>
+                    </div>
+
+                    <div className="flex justify-between items-center pb-3 border-b border-yellow-100">
+                      <div className="flex items-center gap-2">
+                        <DollarSign className="w-4 h-4 text-blue-500" />
+                        <span className="text-slate-500 font-bold uppercase text-[10px] tracking-widest">Bạn dự đoán</span>
+                      </div>
+                      <span className="text-blue-600 font-black text-xl">{gameState.winner && formatVND(gameState.winner.guess)}</span>
+                    </div>
+
+                    <div className="flex justify-between items-center pb-3 border-b border-yellow-100">
+                      <div className="flex items-center gap-2">
+                        <Gift className="w-4 h-4 text-yellow-600" />
+                        <span className="text-slate-500 font-bold uppercase text-[10px] tracking-widest">Giá niêm yết</span>
+                      </div>
+                      <span className="text-yellow-600 font-black text-xl">{gameState.prize && formatVND(gameState.prize.realPrice)}</span>
+                    </div>
+
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-slate-400" />
+                        <span className="text-slate-500 font-bold uppercase text-[10px] tracking-widest">Lúc dự đoán</span>
+                      </div>
+                      <span className="text-slate-800 font-bold font-mono">{gameState.winner && formatTime(gameState.winner.timestamp)}</span>
+                    </div>
                  </div>
-                 <p className="mt-8 text-slate-400 text-xs font-bold uppercase tracking-widest">Hãy mang thiết bị này lên sân khấu nhận quà!</p>
+
+                 <div className="mt-8 flex items-center gap-2 bg-yellow-50 px-6 py-4 rounded-2xl text-yellow-800 font-black uppercase text-xs border border-yellow-200 animate-pulse">
+                    <Trophy className="w-5 h-5 shrink-0" />
+                    Hãy mang thiết bị này lên sân khấu!
+                 </div>
                </>
              ) : (
                <>
                  <div className="bg-slate-100 p-8 rounded-full mb-8 mt-10 opacity-60">
                     <Frown className="w-20 h-20 text-slate-400" />
                  </div>
-                 <h2 className="text-3xl font-bold text-slate-800 mb-4">CHƯA MAY MẮN RỒI!</h2>
+                 <h2 className="text-3xl font-bold text-slate-800 mb-4 uppercase">CHƯA MAY MẮN RỒI!</h2>
                  <p className="text-slate-600 text-lg mb-8 leading-relaxed italic">Cảm ơn bạn đã tham gia. Giá bạn dự đoán chưa sát với giá thực tế nhất.</p>
                  <div className="bg-slate-50 border border-slate-200 p-6 rounded-[32px] w-full opacity-70">
                     <p className="text-slate-500 font-bold mb-1 uppercase text-[10px] tracking-widest">Giá niêm yết từ BTC</p>
